@@ -21,36 +21,40 @@ cutoff <- 0.01
 # The no. of SNPs to sample (glmer gets indigestion with the full dataset)
 snpNo <- 200 
 
+# mixed effects library with the lmer function
+library(lme4)
+# knitr utilities
+library(knitr)
 
 ```
 
 
 ### Raw data
 
-The datafile (read from github.com/qmwugbt112/nuMt-analysis),
-gives the
+The datafile (read from github.com/qmwugbt112/nuMt-analysis), gives
 
-  * the proportion of all reads that are mtDNA-like (i.e. are either organellar or nuMt)
-  * counts of the 
-    + alternative allele (i.e. not found in organellar sequence)
-    + main allele 
+  * **mapDep**: the proportion of all reads that are mtDNA-like (i.e. are either organellar or nuMt)
+  * counts of 
+    + **main**: the main allele (i.e. the one shared with organellar DNA sequence)
+    + **alt**: alternate allele (i.e. the one restricted to nuMt DNA sequences)
+    
   * names for 
-    + the SNP
-    + the individual insect
-  * a boolean variable identifying sites thought to be polymorphic in the organellar mitochondrial DNA (which would muddy the analysis). 
+    + the **SNP**
+    + the **individual** insect sampled
+  * **polymorphic**: a boolean variable identifying sites thought to be polymorphic in the organellar mitochondrial DNA (which would muddy the analysis). 
 
 ```{r , echo=FALSE, cache=TRUE}
 temp <- tempfile()
 download.file("https://github.com/qmwugbt112/nuMt-analysis/raw/main/mapDepFreq.csv.zip", temp)
 binDat <- read.csv(unz(temp,'mapDepFreq.csv'))
 rm(temp)
-library(knitr)
+
 kable(binDat[1:7,], caption="Raw data")
 ```
 
 
 
-```{r, include=FALSE}
+```{r, include=FALSE, cache=TRUE}
 # Some initial data processing creates 3 matrixes
 # arranged so all the information from one individual is in a row 
 # (& each SNP site is a column):
@@ -92,11 +96,11 @@ These three plots show
 
 * The distribution of raw allele frequency data for each SNP across all individuals
 * The truncated data (Frequencies > 1%)
-* The subsampled data (SNPs selected in proportion to their frequency)
+* The sub-sampled data (SNPs selected in proportion to their frequency)
 
 The idea behind the subsampling method is that the higher-frequency alleles are more informative about the proportion of the nuclear genome that is nuMt DNA, so they more heavily sampled. However we wish to cover the whole frequency spectruum; in case rare alleles show different trends, for example.
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, cache=TRUE}
 par(mfrow = c(3,1))
 par(mar=c(2,1,1,1))
 
@@ -152,7 +156,16 @@ par(mfrow = c(1,1))
 
 ### Viewing the subsampled data
 
-```{r, echo=FALSE}
+We expect the frequency of the non-organellar allele to be diluted in samples with more organellar DNA, according to the relationship 
+$$p_{obs} = \frac{c}{c+m}p_{n} ;$$ 
+where $p_{obs}$ is the observed frequency of the alternate allele, $p_n$ is the true frequency of that allele among the nuclear sequences, $c$ is the unknown relative frequency of nuMts and $c+m$ is the observed relative frequency of mitochondrial-like sequences (frequencies calculated as a proportion of the rest of the nuclear genome). Hence 
+$$log(p_{obs}) = -log(c+m) + p_n + c .$$
+
+Consequently a plot of $log(p_{obs})$ aginst $-log(c+m)$ should have a slope of 1 and an intercept of $log(p_n) + log(c)$.  It will vary among alleles, and the SNPs with a higher value of $p_n$ give a lower bound on $c$.
+
+An inital plot shows most loci fit a 1:1 relationships (Lines are the 1:1 plots with the highest and lowest intercept), but with some outliers (indicated).  The older data, sequenced with a different technology, fit a similar relationship, but the observed frequencies are higher, especially for the rarer alleles. Consequently the two datasets were treated separately in the subsequent analysis.
+
+```{r, echo=FALSE, cache=TRUE}
 # Create a boolean vector to record T for the selected SNPs F for the others
 chosen <- rep(FALSE, length(freq))
 chosen[choice2] <- TRUE
@@ -222,6 +235,8 @@ axis(1, at = log(2^(0:3*3)), labels = 2^(0:3*3))
 ll <- expression("0", "10"^-1, "10"^-2,"10"^-3,"10"^-4,"10"^-5,"10"^-6)
 axis(2, at = log(10^(0:-6)), labels = ll)
 
+text(log(20), log(0.09), "Outliers \U2192")
+
 abline(minval, 1)
 abline(maxval, 1)
 abline(h = -max(subDat$xvals), lty = 3)
@@ -230,11 +245,96 @@ abline(v = 0, lty = 3)
 
 ```
 
+### Identifying outlying SNP loci 
 
-```{r}
-summary(mod1)
+The initial inspection suggested that a subset of loci deviate from the typical regression of log$(p_obs)$ vs -log$(c + m)$.  Deviant loci were identified by fitting a mixed effects model with a different slope for each locus:  
+log$(p_{obs})$ ~ SNP + log$(c+m)$ + log$(c+m)$:SNP + (1 | individual), and plotting a histogram of the slopes.
+
+```{r, include=FALSE}
+
+# Choose a colour score for each SNP depending on its intercept in the simple regression
+# calculate the raw intercepts for recent samples 
+cs <- c(cvals[1],cvals[-(1:2)] + cvals[1])
+
+# allocate a colour score according to the rank intercept
+SNPcol <- rank(cs, ties.method = 'random')
+subDat$colours <- rep(SNPcol, each = nlevels(subDat$individual))
+
+# Separate out the data for the older dataset using a different sequencing technology
+oldDat <- subset(subDat, (older == TRUE))
+newDat <- subset(subDat, (older == FALSE))
+
+# correct nlevels for individuals in each dataset by reading back in changed factors
+oldDat$individual <- factor(oldDat$individual)
+newDat$individual <- factor(newDat$individual)
+
 ```
 
 
+```{r, echo=FALSE, cache=TRUE}
+# find rogue SNPs which have an outlying slope in the regression for the larger recent dataset
+
+
+
+mod2 <- lmer(yvals ~ SNP + xvals + xvals:SNP + (1 | individual), 
+#             offset = xvals,
+             data = newDat)
+
+longSummary <- summary(mod2)
+
+# find the SNP:xval interaction terms in mod6
+iterms <- grep('xvals',names(longSummary$coefficients[,1]))
+slopes <- longSummary$coefficients[iterms,1]
+
+# Convert interaction terms from differences to raw slope values
+# by adding the first value to all subsequent values
+slopes[-1] <- slopes[-1] + slopes[1]
+
+# spot outlying SNPs (markedly different slope from the rest)
+hist(slopes, breaks = 40)
+abline(v = 0.7, col = 'red')
+
+rogueSNPs <- which(abs(slopes)<0.7)
+text(0.2,15,"Outlying slopes", col = "red")
+
+
+
+# Put the classification of rogue SNPs into the dataframes
+
+# convert the SNP index numbers to SNP names
+rogueSNPs <- with(newDat, levels(SNP)[rogueSNPs])
+
+# apply these classifications and identify rouges in the two dataframes
+newDat$rogueSNP <- with(newDat, is.element(SNP, rogueSNPs))
+oldDat$rogueSNP <- with(oldDat, is.element(SNP, rogueSNPs))
+
+```
+
+### The regression patterns in the rogue SNPs
+
+The rogue SNPs do not follow the expected 1:1 relationship with $(c+m)$
+
+```{r, echo=FALSE, cache=TRUE}
+
+with(subset(newDat,rogueSNP),
+     plot(xvals, yvals,
+          main = 'Rogue SNPs',
+          xlab = '(Unmapped reads / Mapped)',
+          ylab = 'Allele Frequency (log scale)',
+          col = rainbow(snpNo)[colours],
+          cex = 0.2,
+          xlim = c(0, max(xvals) * 1.01),
+          ylim = c(minval, max(c(0,yvals), na.rm = T) * 1.1),
+          xaxt = 'n',
+          yaxt = 'n'
+     )
+)
+
+axis(1, at = log(2^(0:3*3)), labels = 2^(0:3*3)) 
+ll <- expression("0", "10"^-1, "10"^-2,"10"^-3,"10"^-4,"10"^-5,"10"^-6)
+axis(2, at = log(10^(0:-6)), labels = ll)
+
+
+```
 
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.

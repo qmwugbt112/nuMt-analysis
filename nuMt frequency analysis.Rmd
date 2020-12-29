@@ -4,7 +4,11 @@ author: "Richard Nichols"
 date: "21/12/2020"
 output: html_document
 ---
-
+```{css, echo = FALSE}
+.bordered {
+  border: solid;
+}
+```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -98,7 +102,7 @@ These three plots show
 * The truncated data (Frequencies > 1%)
 * The sub-sampled data (SNPs selected in proportion to their frequency)
 
-The idea behind the subsampling method is that the higher-frequency alleles are more informative about the proportion of the nuclear genome that is nuMt DNA, so they more heavily sampled. However we wish to cover the whole frequency spectruum; in case rare alleles show different trends, for example.
+Subsampling is required because so the lmer function will run. Higher-frequency alleles are more informative about the proportion of the nuclear genome that is nuMt DNA, so they more heavily sampled. However we wish to cover the whole frequency spectruum; in case rare alleles show different trends, for example.
 
 ```{r, echo=FALSE, cache=TRUE}
 par(mfrow = c(3,1))
@@ -247,10 +251,9 @@ abline(v = 0, lty = 3)
 
 ### Identifying outlying SNP loci 
 
-The initial inspection suggested that a subset of loci deviate from the typical regression of log$(p_obs)$ vs -log$(c + m)$.  Deviant loci were identified by fitting a mixed effects model with a different slope for each locus:  
-log$(p_{obs})$ ~ SNP + log$(c+m)$ + log$(c+m)$:SNP + (1 | individual), and plotting a histogram of the slopes.
+The initial inspection suggested that a subset of loci deviate from the typical regression of log$(p_obs)$ vs -log$(c + m)$.  Deviant loci were identified by fitting a mixed effects model with a different slope for each locus:
 
-```{r, include=FALSE}
+```{r,  include=FALSE}
 
 # Choose a colour score for each SNP depending on its intercept in the simple regression
 # calculate the raw intercepts for recent samples 
@@ -271,16 +274,22 @@ newDat$individual <- factor(newDat$individual)
 ```
 
 
-```{r, echo=FALSE, cache=TRUE}
+```{r, cache=TRUE,echo=FALSE, class.output = ".bordered"}
 # find rogue SNPs which have an outlying slope in the regression for the larger recent dataset
 
 
 
 mod2 <- lmer(yvals ~ SNP + xvals + xvals:SNP + (1 | individual), 
-#             offset = xvals,
              data = newDat)
 
 longSummary <- summary(mod2)
+print(mod2@call)
+
+```
+
+The outliers were selected by inspection of a histogram of slopes for each SNP.
+
+```{r, echo=FALSE}
 
 # find the SNP:xval interaction terms in mod6
 iterms <- grep('xvals',names(longSummary$coefficients[,1]))
@@ -312,7 +321,7 @@ oldDat$rogueSNP <- with(oldDat, is.element(SNP, rogueSNPs))
 
 ### The regression patterns in the rogue SNPs
 
-The rogue SNPs do not follow the expected 1:1 relationship with $(c+m)$
+The rogue SNPs do not follow the expected 1:1 relationship with -log$(c+m)$ = log(unmapped reads/mapped)
 
 ```{r, echo=FALSE, cache=TRUE}
 
@@ -336,5 +345,65 @@ axis(2, at = log(10^(0:-6)), labels = ll)
 
 
 ```
+## Estimating the proportion of nuMt DNA in the nucleus
+The remaining data can be fitted to a model of a 1:1 slope by using $(c+m)$ as an offset.  Individual is treated as a random effect. There are two bounds on c: an upper bound estimated from the smallest relative frequency of (c+m) and a lower bound estimated from the highest intercept. 
+The intercept is log($c$) +log($p_n$) so the lower estimate will will be close to $c$ for SNPs with high frequency of the nuMt allele.
 
+```{r, echo=FALSE, class.output = ".bordered"}
+
+# Create a dataset with the well behaved SNPs
+goodnewDat <- subset(newDat, !rogueSNP)
+# Read back in the SNP factor to get levels right
+goodnewDat$SNP <- with(goodnewDat, factor(SNP))
+
+# Fit the 1:1 modle for each SNP
+mod3 <- lmer(yvals ~ 0 + SNP + (1 | individual),
+             offset = xvals,
+             data = goodnewDat)
+
+# extract intercepts
+cvals <- summary(mod3)$coefficients[,1]
+
+# choose a colour for each SNP according to its intercept
+scols <- rank(cvals,
+              ties.method = 'random')
+goodnewDat$colours <- rep(scols,
+                          each = nlevels(goodnewDat$individual))
+
+
+
+with(goodnewDat,
+     plot(xvals, yvals,
+          main = 'Estimating nuMt Proportions',
+          xlab = '(Unmapped reads / Mapped)',
+          ylab = 'Allele Frequency (log scale)',
+          col = rainbow(snpNo)[colours],
+          cex = 0.2,
+          xlim = c(0, max(xvals) * 1.01),
+          ylim = c(min(cvals), max(c(0,yvals), na.rm = T) * 1.1),
+          xaxt = 'n',
+          yaxt = 'n'
+      
+     )
+)
+
+axis(1, at = log(2^(0:3*3)), labels = 2^(0:3*3)) 
+ll <- expression("0", "10"^-1, "10"^-2,"10"^-3,"10"^-4,"10"^-5,"10"^-6)
+axis(2, at = log(10^(0:-6)), labels = ll)
+
+for (c in 1:length(cvals)) abline(cvals[c], 1, col = rainbow(snpNo)[scols[c]], lwd = 0.05)
+abline(v = 0, lty = 3)
+abline(h = - max(goodnewDat$xvals), lty = 3)
+
+cHi <- format(100*plogis(-max(goodnewDat$xvals)), digits =2)
+cat("Upper estimate of c  (the lowest of (c+m)):   ",
+      cHi,"%")
+
+cLo <- format(100*exp(max(cvals)), digits =2)
+cat("Lower estimate of c  (the highest intercept):   ",
+      cLo,"%")
+```
+
+
+........................................................................
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.

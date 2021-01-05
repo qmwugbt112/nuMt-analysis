@@ -291,7 +291,7 @@ The outliers were selected by inspection of a histogram of slopes for each SNP.
 
 ```{r, echo=FALSE}
 
-# find the SNP:xval interaction terms in mod6
+# find the SNP:xval interaction terms in mod1
 iterms <- grep('xvals',names(longSummary$coefficients[,1]))
 slopes <- longSummary$coefficients[iterms,1]
 
@@ -404,6 +404,72 @@ cat("Lower estimate of c  (the highest intercept):   ",
       cLo,"%")
 ```
 
+
+### analysis of residual variation
+
+The residual variation is an estimate of the variation of allele frequencies among nuMts, which might have a geographical structure (nearby populations might be expected to have similar frequencies).  The residual pattern of residual variation among samples was therefore used to construct a Principle components analysis
+
+
+```{r, echo=FALSE, class.output = ".bordered"}
+
+
+
+
+
+# use a glm allowing us to deal with zero allele frequencies
+mod4 <- glm(cbind(alt,main) ~ 0 + SNP,
+            offsett = xvals,
+            family = binomial(link = "log"),
+            data = goodnewDat)
+
+# store the raw residuals (i.e. on the natural scale) of mod3
+goodnewDat$resid<- residuals(mod4, type = "response")
+hist(residuals(mod4, type = "response"))
+
+# create a individual by SNP matrix of residuals
+resMat <- with (goodnewDat, matrix(resid,
+                                   nrow = nlevels(individual),
+                                   ncol = nlevels(SNP)))
+
+# find the mean for each row (individual)
+iMeans <- rowMeans(resMat)
+
+resMat2 <- resMat - iMeans
+
+
+# identify the values included in the mod3 regression
+# i.e. had a non-zero observed frequency
+include <- !(is.na(goodnewDat$yvals))
+
+
+
+# carry out the pca analysis
+pca <- prcomp(resMat2, scale. = TRUE)
+
+# extract the names for each individual
+iNames <- with(goodnewDat,
+               as.character(individual[1:nlevels(individual)]))
+# get the length of each name
+ln <- nchar(iNames)
+
+# extract the last letter of the name
+ll <- substr(iNames, ln, ln)
+
+# extract the other characters (should be a number)
+oc <- substr(iNames, 1, (ln-1))
+
+# convert the last letter of the name (F,T or U) to (1,2 or 3)
+cols <- as.numeric(factor(ll))
+
+
+plot(pca$x[,1:2], col = rainbow(3)[cols])
+
+plot(pca$x[cols == 2,1:2], type = 'n')
+for (i in 1:length(cols)) if (cols[i]==2) {
+  text(oc[i],x = pca$x[i,1], y= pca$x[i,2])
+  }
+
+```
 
 ........................................................................
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
